@@ -149,38 +149,6 @@ images, labels = next(data_iter)
 # print labels
 print(' '.join(f'{classes[labels[j]]:5s}' for j in range(batch_size)))
 
-#how the maxpool works while we are preserving the shape in blocks by padding (1,1)
-block1 =224
-pool1 =math.ceil((block1-3)/2 +1)
-print(pool1)
-
-
-block2=pool1
-
-pool2 =math.ceil((block2-3)/2 +1)
-print(pool2)
-
-
-
-block3=pool2
-pool3 =math.ceil((block3-3)/2 +1)
-print(pool3)
-
-
-block4=pool3
-pool4 =math.ceil((block4-3)/2 +1)
-print(pool4)
-
-
-block5=pool4
-pool5 =math.ceil((block5-3)/2 +1)
-print(pool5)
-
-
-#After flatten
-flatten= pool5 * pool5 * 512
-print(f'After flatten:: {flatten}')
-
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = VGG16_NET()
 model = model.to(device=device)
@@ -220,5 +188,4 @@ for epoch in range(num_epochs):  # I decided to train the model for 50 epochs
             f"accuracy {float(correct) / float(samples) * 100:.2f} percentage || Correct {correct} out of {samples} samples")
 
 
-#SAVES THE TRAINED MODEL
 torch.save(model.state_dict(), pt_dir)
