@@ -1,6 +1,10 @@
 import os
 import yaml
 import math
+import matplotlib.pylab as plt
+import scipy.io
+
+from seaborn.utils import DATASET_SOURCE
 from tqdm import tqdm
 import re
 import cv2
@@ -31,9 +35,17 @@ code_path = os.getcwd()
 main_dir, main_file = os.path.split(code_path)
 dataset_dir = os.path.join(main_dir, 'dataset/gtsrb')
 pt_dir = os.path.join(main_dir, 'pt/fish.pt')
+
+### CUDA
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+if torch.cuda.device_count() > 1:
+    is_multiple_gpu = True
+else:
+    is_multiple_gpu = False
+
 ### Hyperparameters
 lr=1e-4 #learning_rate = 0.001
-num_epochs = 10
+num_epochs = 50
 batch_size = 128
 
 class VGG16_NET(nn.Module):
@@ -97,7 +109,7 @@ def imshow(img):
     plt.imshow(np.transpose(npimg, (1, 2, 0)))
     plt.show()
 
-class CustomDataset(Dataset):
+class FishDataset(Dataset):
 
     def __init__(self, root_dir, transform=None):
         self.transform = transform
@@ -147,11 +159,31 @@ class CustomDataset(Dataset):
         image = io.imread(img_name)
         plt.imshow(image)
         plt.show()
+class FoodDataset(Dataset):
+    def __init__(self, root_dir, transform=None, mode=None):
+        self.transform = transform
+        # Configure dataset path
+        self.dataset_path = os.path.join(root_dir, 'dataset/food-101/food-101/food-101')
+
+        if mode == 'test':
+            self.df = pd.read_csv(os.path.join(self.dataset_path, 'meta/test.txt'), header=None, names=['path'])
+        else:
+            self.df = pd.read_csv(os.path.join(self.dataset_path, 'meta/train.txt'), header = None, names=['path'])
+        self.df['label'] = self.df['path'].map(lambda x: self.DFSpliter(data=x, class_or_id='Class'))
+
+    def DFSpliter(self, data, class_or_id='id'):
+        if class_or_id.upper() == 'CLASS':
+            output = data.split('/')[0]
+
+        else:
+            output = data.split('/')[-1]
+        return output
 
 
 
 
-# images_df = cst_data.images_df
+
+    # images_df = cst_data.images_df
 
 tranform_train  = transforms.Compose([transforms.Resize((224,224)),
                                      transforms.RandomHorizontalFlip(p=0.7),
@@ -167,15 +199,22 @@ tranform_val = transforms.Compose([transforms.Resize((224,224)),
                                                          std=[0.229, 0.224, 0.225])])
 
 # prep the train, validation and test dataset
-
-torch.manual_seed(2021)
+if device == 'cuda':
+    torch.cuda.manual_seed(2021)
+    # torch.backends.cudnn.deterministic = True
+else:
+    torch.manual_seed(2021)
 # train = torchvision.datasets.
-train = CustomDataset(main_dir, transform=tranform_train)
+train = FishDataset(main_dir, transform=tranform_train)
+test = FishDataset(main_dir, transform=tranform_val)
+print(type(train.images_df))
+print(train.images_df.shape, test.images_df.shape)
+
 class_len = len(train.classes)
-val_size = 1000
+val_size = 1800
 train_size = len(train) - val_size
 train, val = random_split(train, [train_size, val_size])
-test = CustomDataset(main_dir, transform=tranform_val)
+
 
 #  train, val and test datasets to the dataloader
 train_loader = DataLoader(dataset=train,
@@ -186,44 +225,73 @@ val_loader = DataLoader(dataset=val,
                          batch_size=batch_size,
                          shuffle=False)
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(device, class_len)
+
+
 model = VGG16_NET(class_len)
 model = model.to(device=device)
+if(is_multiple_gpu):
+    model = nn.DataParallel(model)
 load_model = True
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr= lr)
 
+train_hist = []
+val_hist = []
+patience = 2
+best_loss = -1
+early_stopping_counter = 0
+
+print(device, is_multiple_gpu, torch.cuda.device_count())
+
 for epoch in range(num_epochs):  # I decided to train the model for 50 epochs
-    loss_var = 0
+
+    model.train() # 250519 added
+    train_loss = 0
 
     for idx, (images, labels) in tqdm(enumerate(train_loader)):
-        images = images.to(device=device)
-        labels = labels.to(device=device)
+        train_inputs = images.to(device=device)
+        train_labels = labels.to(device=device)
         ## Forward Pass
         optimizer.zero_grad()
-        scores = model(images)
-        loss = criterion(scores, labels)
+        train_outputs = model(train_inputs)
+        loss = criterion(train_outputs, train_labels)
         loss.backward()
         optimizer.step()
-        loss_var += loss.item()
-        # if idx % 64 == 0:
-        #     print( f'Epoch [{epoch + 1}/{num_epochs}] || Step [{idx + 1}/{len(train_loader)}] || Loss:{loss_var / len(train_loader)}')
-    print(f"Loss at epoch {epoch + 1} || {loss_var / len(train_loader)}")
+        train_loss += loss.item()
 
+    model.eval() # 250519 added
+    val_loss = 0
     with torch.no_grad():
         correct = 0
         samples = 0
         for idx, (images, labels) in tqdm(enumerate(val_loader)):
-            images = images.to(device=device)
-            labels = labels.to(device=device)
-            outputs = model(images)
-            _, preds = outputs.max(1)
-            correct += (preds == labels).sum()
+            val_inputs = images.to(device=device)
+            val_labels = labels.to(device=device)
+            val_outputs = model(val_inputs)
+            loss = criterion(val_outputs, val_labels)
+            val_loss = loss.item()
+
+            _, preds = val_outputs.max(1)
+            correct += (preds == val_labels).sum()
             samples += preds.size(0)
-        print(
-            f"accuracy {float(correct) / float(samples) * 100:.2f} percentage || Correct {correct} out of {samples} samples")
 
+    train_loss /= len(train_loader)
+    val_loss = val_loss / len(val_loader)
+    train_hist.append(train_loss)
+    val_hist.append(val_loss)
 
-torch.save(model.state_dict(), pt_dir)
+    accuracy = correct / samples * 100
+    print(f"epoch:{epoch + 1},",f"train loss:{train_loss:.4f}, val loss:{val_loss:.4f}, val acc: {accuracy:.2f}%")
 
+    if best_loss == -1 or val_loss < best_loss:
+        best_loss = val_loss
+        early_stopping_counter = 0
+        save_str = 'pt/fish_best_' + str(epoch) + '.pt'
+        torch.save(model.state_dict(), os.path.join(main_dir, save_str))
+    else:
+        early_stopping_counter += 1
+        if early_stopping_counter >= patience:
+            print(f"{epoch + 1}, early_stopping_counter")
+            break
+
+torch.save(model.state_dict(), os.path.join(main_dir, 'pt/fish_last.pt'))
