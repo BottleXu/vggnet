@@ -362,15 +362,11 @@ optimizer = torch.optim.Adam(model.parameters(), lr= lr)
 # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
 
 # ReduceLROnPlateau scheduler with validation loss monitoring
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, cooldown=2, threshold=0.01)
+# scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, cooldown=2, threshold=0.01)
 
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
 
-# scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
-#                                         max_lr=0.01,
-#                                         total_steps=None,
-#                                         epochs=10,
-#                                         steps_per_epoch=len(train_loader))
+scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-2, total_steps=None, epochs=num_epochs, steps_per_epoch=len(train_loader))
 
 
 train_hist = []
@@ -405,7 +401,7 @@ if is_train:
             train_loss += loss.item()
 
             # # Step the scheduler after each batch
-            # scheduler.step()
+            scheduler.step()
         # Step the scheduler at the end of each epoch
         # scheduler.step()
 
@@ -433,7 +429,7 @@ if is_train:
 
 
         # # Step the scheduler based on validation loss
-        scheduler.step(val_loss)
+        # scheduler.step(val_loss)
 
         accuracy = correct / samples * 100
         print(f"epoch:{epoch + 1},",f"train loss:{train_loss:.4f}, val loss:{val_loss:.4f}, val acc: {accuracy:.2f}%")
